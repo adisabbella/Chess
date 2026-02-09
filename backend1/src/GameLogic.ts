@@ -1,4 +1,4 @@
-import { WebSocket } from "ws";
+import type { WebSocket } from "ws";
 import { Chess } from "chess.js";
 import { MessageType } from "./messages.js";
 
@@ -13,62 +13,63 @@ export class Game {
     this.player2 = player2;
     this.board = new Chess();
     this.startTime = new Date();
-    
+
     this.player1.send(JSON.stringify({
       type: MessageType.INIT_GAME,
-      payload: { color : "white" }
-    }))
+      payload: { color: "white" }
+    }));
+
     this.player2.send(JSON.stringify({
       type: MessageType.INIT_GAME,
-      payload: { color : "black" }
-    }))
+      payload: { color: "black" }
+    }));
   }
 
-  makeMove(socket: WebSocket, move: {
-    from: string,
-    to: string
-  }) {
-    if (this.board.moves.length % 2 === 0 && socket !== this.player1) {
-      return;
-    }
-    else if (this.board.moves.length % 2 !== 0 && socket !== this.player2) {
-      return;
-    }
+  private sendToBoth(message: unknown) {
+    const s = JSON.stringify(message);
+    try { this.player1.send(s); } catch {}
+    try { this.player2.send(s); } catch {}
+  }
+
+  private sendToSocket(socket: WebSocket, message: unknown) {
+    try { socket.send(JSON.stringify(message)); } catch {}
+  }
+
+  makeMove(socket: WebSocket, move: { from: string; to: string; promotion?: string }) {
+    const turn = this.board.turn();
+
+    if (turn === "w" && socket !== this.player1) return;
+    if (turn === "b" && socket !== this.player2) return;
 
     try {
       this.board.move(move);
     }
-    catch(e) {
+    catch {
+      socket.send("invalid move");
       return;
     }
 
-    if (this.board.isGameOver()) {
-      const winner = (this.board.turn() === 'w')? "black": "white";
-      this.player1.send(JSON.stringify({
-        type: MessageType.GAME_OVER,
-        payload: {
-          winner: winner
-        }
-      }))
-      this.player2.send(JSON.stringify({
-        type: MessageType.GAME_OVER,
-        payload: {
-          winner: winner
-        }
-      }))
-    }
+    const opponent = socket === this.player1 ? this.player2 : this.player1;
+    this.sendToSocket(opponent, { type: MessageType.MOVE, payload: move });
 
-    if (this.board.moves.length % 2 === 0) {
-      this.player2.send(JSON.stringify({
-        type: MessageType.MOVE,
-        payload: move
-      }))
+    if (this.board.isGameOver()) {
+      let winner: string | null;
+
+      if (this.board.isCheckmate()) {
+        winner = this.board.turn() === "w" ? "black" : "white";
+      }
+      else {
+        winner = "Game Ended in a DRAW!"
+      }
+    
+      this.sendToBoth({
+        type: MessageType.GAME_OVER,
+        payload: { winner }
+      });
     }
-    else {
-      this.player1.send(JSON.stringify({
-        type: MessageType.MOVE,
-        payload: move
-      }))
-    }
+  }
+
+  isGameOver() {
+    return this.board.isGameOver();
   }
 }
